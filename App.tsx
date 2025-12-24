@@ -3,7 +3,7 @@ import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIc
 import * as htmlToImage from 'html-to-image';
 import PosterPreview from './components/PosterPreview';
 import { RichTextEditor } from './components/RichTextEditor';
-import { PosterData, ImageConfig, ContentBlock, ContentBlockType } from './types';
+import { PosterData, ImageConfig, ContentBlock, ContentBlockType, PosterDetail } from './types';
 
 // Updated Default Data with HTML content for rich text compatibility
 const INITIAL_DATA: PosterData = {
@@ -66,6 +66,15 @@ function App() {
     setPosterData(prev => ({
       ...prev,
       details: prev.details.map(d => d.id === id ? { ...d, [field]: newValue } : d)
+    }));
+  };
+
+  const handleDetailStyleChange = (id: string, styleUpdate: Partial<NonNullable<PosterDetail['style']>>) => {
+    setPosterData(prev => ({
+      ...prev,
+      details: prev.details.map(d => 
+        d.id === id ? { ...d, style: { ...d.style, ...styleUpdate } } : d
+      )
     }));
   };
 
@@ -196,14 +205,13 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-[rgb(29,29,31)] font-sans flex flex-col md:flex-row">
+    <div className="min-h-screen bg-white text-[rgb(29,29,31)] font-sans flex flex-row">
       
-      {/* LEFT SIDEBAR: Controls - Responsive Padding & Layout */}
-      {/* Mobile: h-auto (scroll naturally), Desktop: h-screen sticky (fixed sidebar) */}
-      <div className="w-full md:w-1/2 bg-white border-r border-slate-200 flex flex-col h-auto md:h-screen md:sticky md:top-0 z-10">
+      {/* LEFT SIDEBAR: Controls - Fixed Desktop Layout */}
+      <div className="w-1/2 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0 z-10">
         
-        {/* Responsive Padding: px-6 for mobile, px-[55px] for desktop */}
-        <div className="px-6 py-6 md:px-[55px] md:pt-[55px] md:pb-6 border-b border-slate-100 shrink-0">
+        {/* Header */}
+        <div className="px-[55px] pt-[55px] pb-6 border-b border-slate-100 shrink-0">
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-700">
             <LayoutTemplate className="w-6 h-6" />
             AI 详情页生成器
@@ -211,13 +219,10 @@ function App() {
           <p className="text-xs text-slate-500 mt-1">输入一段文字，自动排版成精美海报</p>
         </div>
 
-        {/* Content Section - Responsive Scrolling */}
-        {/* Mobile: default overflow, Desktop: flex-1 overflow-y-auto */}
-        <div className="px-6 py-6 md:px-[55px] md:py-8 space-y-8 md:flex-1 md:overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
+        {/* Content Section - Scrollable */}
+        <div className="px-[55px] py-8 space-y-8 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
           
-          {/* REMOVED Step 1 (AI Input) as requested */}
-
-          {/* STEP 1: Image (Renumbered from 2) */}
+          {/* STEP 1: Image */}
           <section className="space-y-4">
              <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">1. 配图设置</h2>
@@ -244,7 +249,7 @@ function App() {
 
           <hr className="border-slate-100" />
 
-          {/* STEP 2: Manual Edits (Renumbered from 3) */}
+          {/* STEP 2: Manual Edits */}
           <section className="space-y-4">
              <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">2. 细节微调</h2>
@@ -266,12 +271,6 @@ function App() {
               <div className="space-y-2">
                  <div className="flex items-center justify-between">
                    <label className="block text-xs font-medium text-slate-500">关键信息</label>
-                   <button 
-                    onClick={handleAddDetail}
-                    className="text-[10px] text-indigo-600 hover:text-indigo-700 flex items-center gap-0.5 font-medium"
-                   >
-                     <Plus size={10} /> 添加行
-                   </button>
                  </div>
                  
                  <div className="space-y-2">
@@ -286,13 +285,45 @@ function App() {
                        />
                        
                        {/* Rich Text Editor for Detail Value */}
-                       <div className="flex-1">
+                       <div className="flex-1 flex flex-col gap-2">
                          <RichTextEditor 
                             value={detail.value}
                             onChange={(val) => handleDetailChange(detail.id, 'value', val)}
                             minHeight="80px"
                             className="w-full"
                          />
+                         
+                         {/* Alignment Controls for Detail */}
+                         <div className="flex items-center gap-1">
+                            <button 
+                              className={`p-1 rounded hover:bg-slate-200 ${detail.style?.textAlign === 'left' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400'}`}
+                              onClick={() => handleDetailStyleChange(detail.id, { textAlign: 'left' })}
+                              title="左对齐"
+                            >
+                              <AlignLeft className="w-3 h-3" />
+                            </button>
+                            <button 
+                              className={`p-1 rounded hover:bg-slate-200 ${detail.style?.textAlign === 'center' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400'}`}
+                              onClick={() => handleDetailStyleChange(detail.id, { textAlign: 'center' })}
+                              title="居中对齐"
+                            >
+                              <AlignCenter className="w-3 h-3" />
+                            </button>
+                            <button 
+                              className={`p-1 rounded hover:bg-slate-200 ${detail.style?.textAlign === 'right' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400'}`}
+                              onClick={() => handleDetailStyleChange(detail.id, { textAlign: 'right' })}
+                              title="右对齐"
+                            >
+                              <AlignRight className="w-3 h-3" />
+                            </button>
+                            <button 
+                              className={`p-1 rounded hover:bg-slate-200 ${(!detail.style?.textAlign || detail.style?.textAlign === 'justify') ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400'}`}
+                              onClick={() => handleDetailStyleChange(detail.id, { textAlign: 'justify' })}
+                              title="两端对齐"
+                            >
+                              <AlignJustify className="w-3 h-3" />
+                            </button>
+                         </div>
                        </div>
 
                        <button 
@@ -304,6 +335,13 @@ function App() {
                      </div>
                    ))}
                  </div>
+                 
+                 <button 
+                    onClick={handleAddDetail}
+                    className="w-full py-2 border border-dashed border-slate-300 text-slate-500 rounded hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 text-xs font-medium flex items-center justify-center gap-1 transition-all"
+                 >
+                   <Plus className="w-3 h-3" /> 添加行
+                 </button>
               </div>
               
               {/* Marketing Copy / Rich Content Editor */}
@@ -491,8 +529,8 @@ function App() {
 
         </div>
 
-        {/* Footer Actions - Responsive Padding */}
-        <div className="px-6 pb-6 pt-4 md:px-[55px] md:pb-[55px] md:pt-6 bg-white border-t border-slate-200 shrink-0">
+        {/* Footer Actions */}
+        <div className="px-[55px] pb-[21px] pt-6 bg-white border-t border-slate-200 shrink-0">
           <button 
             onClick={handleDownload}
             disabled={isDownloading}
@@ -515,12 +553,11 @@ function App() {
         </div>
       </div>
 
-      {/* RIGHT SIDE: Preview Canvas - Responsive Padding */}
-      <div className="w-full md:w-1/2 bg-slate-200 flex items-start justify-center p-4 md:p-[35px] overflow-hidden relative min-h-[500px] md:min-h-screen">
+      {/* RIGHT SIDE: Preview Canvas - Fixed Desktop Layout */}
+      <div className="w-1/2 bg-slate-200 flex items-start justify-center p-[35px] overflow-hidden relative min-h-screen">
         <div className="absolute inset-0 pattern-grid-lg text-slate-300 opacity-20 pointer-events-none"></div>
         
         <div className="flex flex-col items-center">
-          {/* Label removed as requested */}
           
           {/* The Poster Component - scalable for screen, but fixed pixels for export */}
           <div className="shadow-2xl ring-1 ring-black/5 rounded-sm overflow-hidden transform transition-transform duration-300 max-w-full">

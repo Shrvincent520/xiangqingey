@@ -15,6 +15,9 @@ export interface PosterDetail {
   id: string;
   label: string;
   value: string;
+  style?: {
+    textAlign?: 'left' | 'center' | 'right' | 'justify';
+  };
 }
 
 export interface PosterData {
