@@ -30,9 +30,3 @@ export interface ImageConfig {
   y: number;
   scale: number;
 }
-
-export enum AppState {
-  IDLE = 'IDLE',
-  ANALYZING = 'ANALYZING',
-  EDITING = 'EDITING',
-}

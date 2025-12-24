@@ -1,10 +1,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
-import { analyzeText } from './services/geminiService';
 import PosterPreview from './components/PosterPreview';
 import { RichTextEditor } from './components/RichTextEditor';
-import { PosterData, AppState, ImageConfig, ContentBlock, ContentBlockType } from './types';
+import { PosterData, ImageConfig, ContentBlock, ContentBlockType } from './types';
 
 // Updated Default Data with HTML content for rich text compatibility
 const INITIAL_DATA: PosterData = {
@@ -24,8 +23,6 @@ const INITIAL_DATA: PosterData = {
 };
 
 function App() {
-  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [rawText, setRawText] = useState("");
   const [posterData, setPosterData] = useState<PosterData>(INITIAL_DATA);
   const [isDownloading, setIsDownloading] = useState(false);
   
@@ -44,30 +41,6 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Handlers
-  const handleAnalyze = async () => {
-    if (!rawText.trim()) return;
-    
-    setAppState(AppState.ANALYZING);
-    try {
-      const data = await analyzeText(rawText);
-      // Ensure AI content is wrapped in basic HTML if it returns plain text
-      // The service now handles details formatting, but we ensure content blocks are safe here
-      const processedContent = data.content.map(block => {
-        if (block.type === 'text' && !block.value.includes('<')) {
-          return { ...block, value: block.value.replace(/\n/g, '<br/>') };
-        }
-        return block;
-      });
-      setPosterData({ ...data, content: processedContent });
-      setAppState(AppState.EDITING);
-    } catch (error) {
-      alert("AI 分析失败，请重试");
-      console.error(error);
-      setAppState(AppState.IDLE); // Go back to idle on error
-    }
-  };
-
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
