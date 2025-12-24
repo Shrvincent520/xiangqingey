@@ -1,0 +1,5 @@
+{
+  "name": "AutoPost - AI Detail Page Generator",
+  "description": "An AI-powered tool that automatically designs mobile detail pages and posters from raw text and images. Features intelligent content extraction and human-in-the-loop layout adjustments.",
+  "requestFramePermissions": []
+}
