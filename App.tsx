@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold, Save, History, Clock, AlertCircle, Layers, FolderDown, Pencil, FileJson, FolderOpen, HardDriveDownload, Loader2 } from 'lucide-react';
+import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold, Save, History, Clock, AlertCircle, Layers, FolderDown, Pencil, FileJson, FolderOpen, HardDriveDownload, Loader2, Copy } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
 import JSZip from 'jszip';
 import PosterPreview from './components/PosterPreview';
@@ -212,9 +212,13 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [savedRecords, setSavedRecords] = useState<SavedRecord[]>([]);
   
-  // Save Modal State (Replaces native prompt)
+  // NEW: Track current draft ID to support Overwrite
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
+  
+  // Save Modal State
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [saveAsCopy, setSaveAsCopy] = useState(false); // New option in modal
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const funcImgInputRef = useRef<HTMLInputElement>(null);
@@ -236,7 +240,13 @@ function App() {
 
   // Open Save Modal
   const handleOpenSaveModal = () => {
-    setSaveName(`草稿 ${new Date().toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}`);
+    // If it's a new draft (no ID), generate a name.
+    // If it's an existing draft, keep the current name (allowing user to rename if they want).
+    if (!currentDraftId) {
+      setSaveName(`草稿 ${new Date().toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}`);
+    }
+    // Reset "Save as Copy" check
+    setSaveAsCopy(false);
     setIsSaveModalOpen(true);
   };
 
@@ -299,7 +309,6 @@ function App() {
     if (!file) return;
 
     if (!window.confirm("确定要导入该工程文件吗？当前未保存的修改将被覆盖。")) {
-       // Reset input so user can select same file again if they cancelled
        e.target.value = '';
        return;
     }
@@ -322,7 +331,11 @@ function App() {
         setImageConfig(record.imageConfig);
         setFunctionalImages(record.functionalImages || []);
         
-        // Small delay to ensure UI updates before alert
+        // Reset ID logic: Imported files are treated as new/unsaved drafts initially
+        // to avoid ID conflicts with local DB.
+        setCurrentDraftId(null); 
+        setSaveName("");
+        
         setTimeout(() => {
           alert(`✅ 导入成功！\n\n已加载工程，包含 ${record.functionalImages?.length || 0} 张商品主图。`);
         }, 100);
@@ -333,7 +346,6 @@ function App() {
         alert(`❌ 导入失败：${msg}\n\n请确认您选择的是正确的 .json 工程文件。`);
       } finally {
         setIsImporting(false);
-        // Reset input to allow selecting the same file again
         if (projectFileInputRef.current) projectFileInputRef.current.value = '';
       }
     };
@@ -344,7 +356,6 @@ function App() {
       if (projectFileInputRef.current) projectFileInputRef.current.value = '';
     };
 
-    // Use a small timeout to allow the "Loading" UI to render before blocking the thread with large file reading
     setTimeout(() => {
         reader.readAsText(file);
     }, 50);
@@ -356,9 +367,8 @@ function App() {
     if (!saveName.trim()) return;
 
     setIsSaving(true);
-    setIsSaveModalOpen(false); // Close modal immediately to show loading on button
+    setIsSaveModalOpen(false); 
     
-    // Give UI a moment to update
     await new Promise(resolve => setTimeout(resolve, 100));
 
     try {
@@ -380,8 +390,11 @@ function App() {
         return block;
       }));
 
+      // Determine ID: Use existing if we have one and NOT saving as copy, otherwise generate new
+      const idToSave = (!saveAsCopy && currentDraftId) ? currentDraftId : Date.now().toString();
+
       const record: SavedRecord = {
-        id: Date.now().toString(),
+        id: idToSave,
         name: saveName,
         timestamp: Date.now(),
         data: { ...posterData, content: newContent },
@@ -393,7 +406,14 @@ function App() {
       await dbAPI.add(record);
       
       // Update State (Memory)
-      setSavedRecords(prev => [record, ...prev]);
+      setSavedRecords(prev => {
+        // Remove old entry with same ID if exists (move to top logic)
+        const filtered = prev.filter(r => r.id !== idToSave);
+        return [record, ...filtered];
+      });
+
+      // Update current tracking ID
+      setCurrentDraftId(idToSave);
 
     } catch (error) {
       alert("保存失败：数据库写入错误。可能是存储空间不足或权限受限。");
@@ -408,6 +428,11 @@ function App() {
       setPosterData(record.data);
       setImageConfig(record.imageConfig);
       setFunctionalImages(record.functionalImages || []);
+      
+      // Track this record so subsequent saves overwrite it
+      setCurrentDraftId(record.id);
+      setSaveName(record.name);
+
       setShowHistory(false);
     }
   };
@@ -418,6 +443,11 @@ function App() {
       try {
         await dbAPI.delete(id);
         setSavedRecords(prev => prev.filter(r => r.id !== id));
+        // If deleting current draft, reset ID
+        if (currentDraftId === id) {
+          setCurrentDraftId(null);
+          setSaveName("");
+        }
       } catch (error) {
         console.error("Delete failed", error);
         alert("删除失败");
@@ -830,14 +860,30 @@ function App() {
                     className="w-full px-3 py-2 bg-slate-100 border-transparent rounded-lg text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
                     onKeyDown={(e) => e.key === 'Enter' && executeSave()}
                  />
+                 {currentDraftId && (
+                   <p className="mt-1 text-xs text-green-600 flex items-center gap-1">
+                     <Clock size={12} /> 正在编辑现有存档，保存将覆盖原记录
+                   </p>
+                 )}
                </div>
+
+               {/* Overwrite or Copy Option */}
+               <div className="flex items-center gap-2 p-3 bg-slate-50 rounded border border-slate-200">
+                  <input 
+                    type="checkbox" 
+                    id="saveAsCopy"
+                    checked={saveAsCopy}
+                    onChange={(e) => setSaveAsCopy(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300"
+                  />
+                  <label htmlFor="saveAsCopy" className="text-sm text-slate-600 cursor-pointer flex items-center gap-1 select-none">
+                    <Copy size={14} /> 另存为新副本 (不覆盖)
+                  </label>
+               </div>
+
                <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded border border-slate-100 flex gap-2">
                   <AlertCircle size={14} className="shrink-0 mt-0.5 text-indigo-500" />
                   <p>草稿将保存到浏览器的数据库中 (IndexedDB)，方便快速切换。</p>
-               </div>
-               <div className="text-xs text-slate-500 bg-indigo-50 p-3 rounded border border-indigo-100 flex gap-2">
-                  <HardDriveDownload size={14} className="shrink-0 mt-0.5 text-indigo-600" />
-                  <p>如果您希望保存文件到电脑以便传输，请使用右上角的“导出工程”。</p>
                </div>
              </div>
              <div className="p-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-100">
@@ -851,7 +897,7 @@ function App() {
                   onClick={executeSave}
                   className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
                 >
-                  确认保存
+                  {saveAsCopy ? '另存为新记录' : (currentDraftId ? '覆盖保存' : '确认保存')}
                 </button>
              </div>
           </div>
@@ -920,9 +966,12 @@ function App() {
                  <div className="text-center py-12 text-slate-400 border border-dashed border-slate-200 rounded-lg">暂无保存记录</div>
                ) : (
                  savedRecords.map(record => (
-                   <div key={record.id} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-300 transition-colors group">
+                   <div key={record.id} className={`flex items-center justify-between p-4 border rounded-lg transition-colors group ${currentDraftId === record.id ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
                       <div className="flex flex-col cursor-pointer flex-1" onClick={() => handleLoadRecord(record)}>
-                        <span className="font-medium text-slate-800 group-hover:text-indigo-700">{record.name}</span>
+                        <span className={`font-medium group-hover:text-indigo-700 ${currentDraftId === record.id ? 'text-indigo-800' : 'text-slate-800'}`}>
+                           {record.name}
+                           {currentDraftId === record.id && <span className="ml-2 text-[10px] bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded-full">当前编辑</span>}
+                        </span>
                         <span className="text-xs text-slate-400">{new Date(record.timestamp).toLocaleString()}</span>
                       </div>
                       <div className="flex items-center gap-3">
@@ -930,7 +979,7 @@ function App() {
                           onClick={() => handleLoadRecord(record)}
                           className="px-3 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
                         >
-                          重新编辑
+                          加载
                         </button>
                         <button 
                           onClick={(e) => handleDeleteRecord(record.id, e)}
@@ -1364,7 +1413,7 @@ function App() {
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                保存草稿
+                {currentDraftId ? '更新草稿' : '保存草稿'}
               </>
             )}
           </button>
