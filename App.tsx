@@ -873,7 +873,17 @@ function App() {
                     type="checkbox" 
                     id="saveAsCopy"
                     checked={saveAsCopy}
-                    onChange={(e) => setSaveAsCopy(e.target.checked)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSaveAsCopy(checked);
+                      // Auto-append " 副本" when checking "Save as Copy" for an existing draft
+                      if (checked && currentDraftId && saveName) {
+                         setSaveName(saveName + " 副本");
+                      } else if (!checked && currentDraftId && saveName.endsWith(" 副本")) {
+                         // Optional: Remove suffix if unchecked
+                         setSaveName(saveName.slice(0, -3));
+                      }
+                    }}
                     className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300"
                   />
                   <label htmlFor="saveAsCopy" className="text-sm text-slate-600 cursor-pointer flex items-center gap-1 select-none">
@@ -979,7 +989,7 @@ function App() {
                           onClick={() => handleLoadRecord(record)}
                           className="px-3 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
                         >
-                          加载
+                          重新编辑
                         </button>
                         <button 
                           onClick={(e) => handleDeleteRecord(record.id, e)}
