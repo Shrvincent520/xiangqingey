@@ -12,8 +12,8 @@ interface PosterPreviewProps {
 
 // Helper component for the "Pill" labels seen in reference image
 // Updated to use the custom SVG shape as background
-// Width increased to w-[6.8rem] and gap increased to prevent overlap
-// Updated: Supports HTML value for rich text rendering
+// Fixed: Switched to explicit pixel font sizes (text-[12px]) to prevent browser scaling issues
+// Adjusted gap to gap-4 for better compactness with smaller text
 const DetailRow: React.FC<{ label: string, value: string, textAlign?: 'left' | 'center' | 'right' | 'justify' }> = ({ label, value, textAlign = 'left' }) => {
   // Heuristic: If text contains line breaks or is long (>24 chars), treat as long content
   // This triggers a vertical layout where the value sits below the label
@@ -27,18 +27,18 @@ const DetailRow: React.FC<{ label: string, value: string, textAlign?: 'left' | '
   }[textAlign];
 
   return (
-    <div className={`flex ${isLong ? 'flex-col items-start gap-2' : 'items-start gap-5'}`}>
+    <div className={`flex ${isLong ? 'flex-col items-start gap-2' : 'items-start gap-4'}`}>
       <div className="shrink-0 relative flex items-center justify-center w-[6.8rem] select-none">
         <svg viewBox="0 0 200 65" className="w-full h-auto text-[#cca379] fill-current drop-shadow-sm">
             <path d="m171.24,64.05H27.7c-7.32,0-13.73-4.41-15.81-10.79-7.03-1.87-11.89-7.76-11.89-14.51v-13.45c0-6.75,4.86-12.64,11.89-14.51C13.97,4.41,20.38,0,27.7,0h143.53c7.32,0,13.73,4.41,15.81,10.79,7.03,1.87,11.89,7.76,11.89,14.51v13.45c0,6.75-4.86,12.64-11.89,14.51-2.08,6.38-8.49,10.79-15.81,10.79ZM27.7,2c-6.64,0-12.42,4.07-14.06,9.9l-.16.57-.58.13c-6.42,1.49-10.91,6.71-10.91,12.7v13.45c0,5.99,4.49,11.22,10.91,12.7l.58.13.16.57c1.63,5.83,7.42,9.89,14.06,9.89h143.53c6.64,0,12.42-4.07,14.06-9.9l.16-.57.58-.13c6.42-1.49,10.91-6.71,10.91-12.7v-13.45c0-5.99-4.48-11.21-10.91-12.7l-.58-.13-.16-.57c-1.64-5.83-7.42-9.9-14.06-9.9H27.7Z" />
             <path d="m27.7,57.99c-4.83,0-9-2.85-10.14-6.93l-.81-2.89-2.92-.68c-4.57-1.06-7.76-4.65-7.76-8.74v-13.45c0-4.09,3.19-7.68,7.76-8.74l2.92-.68.81-2.89c1.14-4.08,5.31-6.93,10.14-6.93h143.53c4.83,0,9,2.85,10.14,6.93l.81,2.89,2.92.68c4.57,1.06,7.76,4.65,7.76,8.74v13.45c0,4.09-3.19,7.68-7.76,8.74l-2.92.68-.81,2.89c-1.15,4.08-5.32,6.93-10.14,6.93H27.7Z" />
         </svg>
-        <span className="absolute inset-0 flex items-center justify-center text-white text-base font-normal tracking-wider pt-[1px]">
+        <span className="absolute inset-0 flex items-center justify-center text-white text-[1rem] font-normal tracking-wider">
           {label}
         </span>
       </div>
       <div 
-        className={`flex-1 text-[rgb(29,29,31)] text-base leading-relaxed font-medium ${isLong ? 'pt-0 pl-1 w-full' : 'pt-[3.5px]'} ${alignmentClass}`}
+        className={`flex-1 text-[rgb(29,29,31)] text-[1rem] leading-relaxed font-medium ${isLong ? 'pt-0 pl-1 w-full' : 'pt-[3.5px]'} ${alignmentClass}`}
         dangerouslySetInnerHTML={{ __html: value }}
       />
     </div>
@@ -186,14 +186,14 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
         
         {/* Title Card */}
         <div className="bg-[rgb(255,244,239)] rounded-[0.55rem] p-[1.8rem] shadow-sm text-left">
-          <h2 className="text-xl font-bold text-[rgb(29,29,31)] leading-tight whitespace-pre-wrap">
+          <h2 className="text-[1.1rem] font-bold text-[rgb(29,29,31)] leading-tight whitespace-pre-wrap">
             {data.subTitle || "主题 Slogan"}
           </h2>
         </div>
 
         {/* Details Card */}
         <div className="bg-[rgb(255,244,239)] rounded-[0.55rem] p-[1.8rem] shadow-sm">
-          <h3 className="text-[1.25rem] font-bold text-[rgb(29,29,31)] mb-5">活动详情</h3>
+          <h3 className="text-[1.1rem] font-bold text-[rgb(29,29,31)] mb-5">活动详情</h3>
           
           <div className="space-y-4">
             {data.details?.map((item) => (
@@ -203,7 +203,7 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
                 value={item.value}
                 textAlign={item.style?.textAlign}
               />
-            )) || <div className="text-sm text-slate-400">暂无信息</div>}
+            )) || <div className="text-[12px] text-slate-400">暂无信息</div>}
           </div>
         </div>
 
@@ -225,7 +225,7 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
               >
                 {block.type === 'text' && block.value && (
                   <div 
-                    className={`text-base leading-7 select-none ${alignmentClass}`}
+                    className={`text-[1rem] leading-relaxed select-none ${alignmentClass}`}
                     dangerouslySetInnerHTML={{ __html: block.value }}
                     style={{ wordBreak: 'break-word' }}
                   />
