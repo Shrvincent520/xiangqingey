@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Move } from 'lucide-react';
-import { PosterData, ImageConfig } from '../types';
+import { PosterData, ImageConfig, HeaderImage } from '../types';
 
 interface PosterPreviewProps {
   id: string;
@@ -27,7 +27,7 @@ const DetailRow: React.FC<{ label: string, value: string, textAlign?: 'left' | '
   }[textAlign];
 
   return (
-    <div className={`flex ${isLong ? 'flex-col items-start gap-2' : 'items-start gap-4'}`}>
+    <div className={`w-full flex ${isLong ? 'flex-col items-start gap-2' : 'items-start gap-4'}`}>
       <div className="shrink-0 relative flex items-center justify-center w-[6.8rem] select-none">
         <svg viewBox="0 0 200 65" className="w-full h-auto text-[#cca379] fill-current drop-shadow-sm">
             <path d="m171.24,64.05H27.7c-7.32,0-13.73-4.41-15.81-10.79-7.03-1.87-11.89-7.76-11.89-14.51v-13.45c0-6.75,4.86-12.64,11.89-14.51C13.97,4.41,20.38,0,27.7,0h143.53c7.32,0,13.73,4.41,15.81,10.79,7.03,1.87,11.89,7.76,11.89,14.51v13.45c0,6.75-4.86,12.64-11.89,14.51-2.08,6.38-8.49,10.79-15.81,10.79ZM27.7,2c-6.64,0-12.42,4.07-14.06,9.9l-.16.57-.58.13c-6.42,1.49-10.91,6.71-10.91,12.7v13.45c0,5.99,4.49,11.22,10.91,12.7l.58.13.16.57c1.63,5.83,7.42,9.89,14.06,9.89h143.53c6.64,0,12.42-4.07,14.06-9.9l.16-.57.58-.13c6.42-1.49,10.91-6.71,10.91-12.7v-13.45c0-5.99-4.48-11.21-10.91-12.7l-.58-.13-.16-.57c-1.64-5.83-7.42-9.9-14.06-9.9H27.7Z" />
@@ -38,7 +38,7 @@ const DetailRow: React.FC<{ label: string, value: string, textAlign?: 'left' | '
         </span>
       </div>
       <div 
-        className={`flex-1 text-[rgb(29,29,31)] text-[1rem] leading-relaxed font-medium ${isLong ? 'pt-0 pl-1 w-full' : 'pt-[3.5px]'} ${alignmentClass}`}
+        className={`flex-1 min-w-0 text-[rgb(29,29,31)] text-[1rem] leading-relaxed font-medium break-all whitespace-pre-wrap [&_*]:break-all ${isLong ? 'pt-0 pl-1 w-full' : 'pt-[3.5px]'} ${alignmentClass}`}
         dangerouslySetInnerHTML={{ __html: value }}
       />
     </div>
@@ -50,7 +50,7 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
   data, 
   imageConfig, 
   onImageConfigChange,
-  scale = 1 
+  scale = 1
 }) => {
   // Global Drag State
   const [dragState, setDragState] = useState<{
@@ -148,7 +148,7 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
         transformOrigin: 'top left',
       }}
     >
-      {/* 1. Header Image Area (Interactive) */}
+      {/* 1. Existing Header Image Area (Interactive) */}
       <div 
         ref={headerRef}
         className={`relative w-full h-[320px] bg-slate-300 overflow-hidden shrink-0 ${imageConfig.url ? 'cursor-move group' : ''}`}
@@ -164,8 +164,8 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
               style={{
                 transform: `translate(${imageConfig.x}px, ${imageConfig.y}px) scale(${imageConfig.scale})`,
                 width: '100%',
-                height: '100%',
-                objectFit: 'cover'
+                height: 'auto', // Changed from 100% to auto to preserve aspect ratio
+                // objectFit: 'cover' removed to prevent pre-cropping
               }}
             />
             
@@ -225,9 +225,8 @@ const PosterPreview: React.FC<PosterPreviewProps> = ({
               >
                 {block.type === 'text' && block.value && (
                   <div 
-                    className={`text-[1rem] leading-relaxed select-none ${alignmentClass}`}
+                    className={`text-[1rem] leading-relaxed select-none break-all whitespace-pre-wrap [&_*]:break-all ${alignmentClass}`}
                     dangerouslySetInnerHTML={{ __html: block.value }}
-                    style={{ wordBreak: 'break-word' }}
                   />
                 )}
                 {block.type === 'image' && block.value && (

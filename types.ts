@@ -1,5 +1,15 @@
 export type ContentBlockType = 'text' | 'image';
 
+export interface HeaderImage {
+  id: string;
+  url: string;
+  crop?: {
+    x: number;
+    y: number;
+    scale: number;
+  };
+}
+
 export interface ContentBlock {
   id: string;
   type: ContentBlockType;

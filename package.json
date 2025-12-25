@@ -1,5 +1,5 @@
 {
-  "name": "ai自动化详情页",
+  "name": "这相有礼商品详情页生成器",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,8 @@
     "react-dom": "^19.2.3",
     "lucide-react": "^0.562.0",
     "html-to-image": "^1.11.13",
-    "react": "^19.2.3"
+    "react": "^19.2.3",
+    "jszip": "3.10.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold } from 'lucide-react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold, Save, History, Clock, AlertCircle, Layers, FolderDown, Pencil } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
+import JSZip from 'jszip';
 import PosterPreview from './components/PosterPreview';
+import CropModal, { PREVIEW_SIZE } from './components/CropModal';
 import { RichTextEditor } from './components/RichTextEditor';
-import { PosterData, ImageConfig, ContentBlock, ContentBlockType, PosterDetail } from './types';
+import { PosterData, ImageConfig, ContentBlock, ContentBlockType, PosterDetail, HeaderImage } from './types';
 
 // Updated Default Data with HTML content for rich text compatibility
 const INITIAL_DATA: PosterData = {
@@ -22,16 +24,46 @@ const INITIAL_DATA: PosterData = {
   ]
 };
 
+// Interface for Saved Records
+interface SavedRecord {
+  id: string;
+  name: string;
+  timestamp: number;
+  data: PosterData;
+  imageConfig: ImageConfig;
+  functionalImages?: HeaderImage[];
+}
+
+// Helper: Convert Blob URL to Base64 for storage
+const blobUrlToBase64 = async (url: string): Promise<string> => {
+  if (!url || url.startsWith('data:')) return url; // Already base64 or empty
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.error("Image conversion failed", e);
+    return "";
+  }
+};
+
 function App() {
   const [posterData, setPosterData] = useState<PosterData>(INITIAL_DATA);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Drag and Drop State for Sidebar
   const [draggedBlockIndex, setDraggedBlockIndex] = useState<number | null>(null);
   // Only enable drag when hovering the handle to prevent conflict with inputs/sliders
   const [activeDragId, setActiveDragId] = useState<string | null>(null); 
   
-  // Image State
+  // Existing Header Image State
   const [imageConfig, setImageConfig] = useState<ImageConfig>({
     url: "", // Default to empty/gray
     x: 0,
@@ -39,8 +71,134 @@ function App() {
     scale: 1
   });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // NEW: Functional Images State (Multi-image)
+  const [functionalImages, setFunctionalImages] = useState<HeaderImage[]>([]);
+  const [draggedFuncImgIndex, setDraggedFuncImgIndex] = useState<number | null>(null);
+  // State for Crop Modal
+  const [editingFuncImageId, setEditingFuncImageId] = useState<string | null>(null);
+
+  // History State
+  const [showHistory, setShowHistory] = useState(false);
+  const [savedRecords, setSavedRecords] = useState<SavedRecord[]>([]);
   
+  // Save Modal State (Replaces native prompt)
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const funcImgInputRef = useRef<HTMLInputElement>(null);
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('poster_history');
+      if (stored) {
+        setSavedRecords(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load history", e);
+    }
+  }, []);
+
+  // Save history to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('poster_history', JSON.stringify(savedRecords));
+    } catch (e) {
+      // Check for QuotaExceededError
+      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+         console.warn("LocalStorage quota exceeded. Data saved in memory only.");
+      } else {
+        console.error("Storage failed", e);
+      }
+    }
+  }, [savedRecords]);
+
+  // Open Save Modal
+  const handleOpenSaveModal = () => {
+    setSaveName(`草稿 ${new Date().toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}`);
+    setIsSaveModalOpen(true);
+  };
+
+  // Actual Save Logic
+  const executeSave = async () => {
+    if (!saveName.trim()) return;
+
+    setIsSaving(true);
+    setIsSaveModalOpen(false); // Close modal immediately to show loading on button
+    
+    // Give UI a moment to update
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    try {
+      // 1. Convert Existing Header Image
+      const headerBase64 = await blobUrlToBase64(imageConfig.url || "");
+
+      // 2. Convert New Functional Images
+      const savedFunctionalImages = await Promise.all(functionalImages.map(async (img) => {
+         const base64 = await blobUrlToBase64(img.url);
+         return { ...img, url: base64 };
+      }));
+      
+      // 3. Convert Content Images
+      const newContent = await Promise.all(posterData.content.map(async (block) => {
+        if (block.type === 'image' && block.value) {
+          const base64 = await blobUrlToBase64(block.value);
+          return { ...block, value: base64 };
+        }
+        return block;
+      }));
+
+      const record: SavedRecord = {
+        id: Date.now().toString(),
+        name: saveName,
+        timestamp: Date.now(),
+        data: { ...posterData, content: newContent },
+        imageConfig: { ...imageConfig, url: headerBase64 },
+        functionalImages: savedFunctionalImages
+      };
+
+      // Try to save to state (Memory)
+      setSavedRecords(prev => {
+        const newRecords = [record, ...prev];
+        
+        // Try to save to LocalStorage (Disk) immediately to catch errors
+        try {
+          localStorage.setItem('poster_history', JSON.stringify(newRecords));
+          // If successful, we are good.
+        } catch (e) {
+          if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+            alert("⚠️ 警告：本地存储空间已满！\n\n该草稿已保存，但仅在当前浏览器窗口未关闭前有效。\n刷新页面后将丢失。\n\n建议：删除旧的历史记录以释放空间。");
+          }
+        }
+        return newRecords;
+      });
+
+    } catch (error) {
+      alert("保存过程中发生错误，请重试。");
+      console.error(error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleLoadRecord = (record: SavedRecord) => {
+    if (window.confirm(`确定要加载存档“${record.name}”吗？当前未保存的修改将丢失。`)) {
+      setPosterData(record.data);
+      setImageConfig(record.imageConfig);
+      setFunctionalImages(record.functionalImages || []);
+      setShowHistory(false);
+    }
+  };
+
+  const handleDeleteRecord = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (window.confirm("确定要删除这条记录吗？")) {
+      setSavedRecords(prev => prev.filter(r => r.id !== id));
+    }
+  };
+  
+  // Handler for Existing Header Image
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -52,6 +210,51 @@ function App() {
         scale: 1
       });
     }
+  };
+
+  // Handlers for New Functional Images
+  const handleFuncImgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
+
+    const newImages: HeaderImage[] = files.map(file => ({
+      id: Date.now().toString() + Math.random().toString().slice(2, 6),
+      url: URL.createObjectURL(file),
+      // Default crop is centered (undefined means center in logic)
+    }));
+
+    setFunctionalImages(prev => [...prev, ...newImages]);
+    if (funcImgInputRef.current) funcImgInputRef.current.value = '';
+  };
+
+  const handleRemoveFuncImg = (id: string) => {
+    setFunctionalImages(prev => prev.filter(img => img.id !== id));
+  };
+  
+  const handleSaveFuncCrop = (id: string, crop: { x: number; y: number; scale: number }) => {
+    setFunctionalImages(prev => prev.map(img => 
+      img.id === id ? { ...img, crop } : img
+    ));
+  };
+
+  const handleFuncImgDragStart = (index: number) => {
+    setDraggedFuncImgIndex(index);
+  };
+
+  const handleFuncImgDragEnter = (targetIndex: number) => {
+    if (draggedFuncImgIndex === null || draggedFuncImgIndex === targetIndex) return;
+
+    setFunctionalImages(prev => {
+      const newImages = [...prev];
+      const [draggedItem] = newImages.splice(draggedFuncImgIndex, 1);
+      newImages.splice(targetIndex, 0, draggedItem);
+      return newImages;
+    });
+    setDraggedFuncImgIndex(targetIndex);
+  };
+
+  const handleFuncImgDragEnd = () => {
+    setDraggedFuncImgIndex(null);
   };
 
   const handleDataChange = (field: keyof PosterData, value: any) => {
@@ -164,7 +367,7 @@ function App() {
   };
 
   const handleDownload = async () => {
-    if (isDownloading) return;
+    if (isDownloading || isZipping) return;
     
     const node = document.getElementById('poster-canvas');
     if (node) {
@@ -204,25 +407,340 @@ function App() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-white text-[rgb(29,29,31)] font-sans flex flex-row">
+  // Modified: Export Functional Images as Zip with MANUAL CROP SUPPORT
+  // Added 'silent' parameter to suppress alert when called from 'Export All' context
+  const handleDownloadFunctional = async (silent: boolean = false) => {
+    if (isDownloading || isZipping) return;
+    
+    if (functionalImages.length === 0) {
+      if (!silent) {
+        alert("没有可导出的商品主图。请先在“0. 商品主图”添加图片。");
+      }
+      return;
+    }
+
+    setIsZipping(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("product-images");
+      const OUTPUT_SIZE = 1200; // High resolution output square
       
+      // Helper to process and crop image
+      const processImage = (imgData: HeaderImage): Promise<Blob> => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous'; 
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = OUTPUT_SIZE;
+            canvas.height = OUTPUT_SIZE;
+            const ctx = canvas.getContext('2d');
+            
+            if (ctx) {
+               // 1. Fill background white
+               ctx.fillStyle = '#FFFFFF';
+               ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+
+               // 2. Calculate Base Dimensions (Fit Width / Original Basis)
+               // Matches CSS in CropModal: width: 100%, height: auto
+               const imgRatio = img.naturalWidth / img.naturalHeight;
+               const drawW = OUTPUT_SIZE;
+               const drawH = OUTPUT_SIZE / imgRatio;
+
+               // 3. Apply User Transforms
+               // The user transforms (x, y) were recorded on a PREVIEW_SIZE container.
+               // We need to scale them up to the OUTPUT_SIZE.
+               const ratio = OUTPUT_SIZE / PREVIEW_SIZE;
+               const userX = (imgData.crop?.x || 0) * ratio;
+               const userY = (imgData.crop?.y || 0) * ratio;
+               const userScale = imgData.crop?.scale || 1;
+
+               // 4. Perform Drawing
+               ctx.save();
+               
+               // Transform Pivot Logic:
+               // In CSS (CropModal), transform-origin is 'center' (50% 50%) of the ELEMENT.
+               // The element is scaled to drawW x drawH.
+               // So the pivot point is (drawW/2, drawH/2).
+               const pivotX = drawW / 2;
+               const pivotY = drawH / 2;
+               
+               // Move to pivot point
+               ctx.translate(pivotX, pivotY);
+               // Apply User Translation (relative to original position)
+               ctx.translate(userX, userY);
+               // Apply User Scale
+               ctx.scale(userScale, userScale);
+               // Move back from pivot point to draw relative to 0,0
+               ctx.translate(-pivotX, -pivotY);
+
+               // Draw the image at 0,0 (Fit Width basis)
+               ctx.drawImage(img, 0, 0, drawW, drawH);
+               
+               ctx.restore();
+
+               canvas.toBlob((blob) => {
+                 if (blob) resolve(blob);
+                 else reject(new Error('Canvas blob failed'));
+               }, 'image/jpeg', 0.95);
+            } else {
+              reject(new Error('Canvas context failed'));
+            }
+          };
+          img.onerror = (e) => reject(e);
+          img.src = imgData.url;
+        });
+      };
+
+      // Process images sequentially
+      await Promise.all(functionalImages.map(async (img, index) => {
+         try {
+           const blob = await processImage(img);
+           folder?.file(`image-${index + 1}.jpg`, blob);
+         } catch (e) {
+           console.error(`Failed to pack image ${index}`, e);
+         }
+      }));
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `product-images-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Zip creation failed", e);
+      alert("导出商品主图压缩包失败，请重试。");
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  // Master Export Function
+  const handleExportAll = async () => {
+    if (isDownloading || isZipping || isSaving) return;
+
+    // 1. Download Poster (Always)
+    await handleDownload();
+
+    // 2. Download Functional Images (If exist)
+    if (functionalImages.length > 0) {
+        // Small delay to ensure browser handles sequential downloads gracefully
+        setTimeout(() => {
+            handleDownloadFunctional(true); // Pass silent=true
+        }, 500);
+    }
+  };
+
+  // Find image to edit
+  const editingFuncImage = functionalImages.find(img => img.id === editingFuncImageId);
+
+  return (
+    <div className="min-h-screen bg-white text-[rgb(29,29,31)] font-sans flex flex-row relative">
+      
+      {/* Crop Modal */}
+      {editingFuncImage && (
+        <CropModal 
+          image={editingFuncImage}
+          onSave={handleSaveFuncCrop}
+          onClose={() => setEditingFuncImageId(null)}
+        />
+      )}
+
+      {/* Custom Save Modal */}
+      {isSaveModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+             <div className="p-5 border-b border-slate-100">
+               <h3 className="font-bold text-lg flex items-center gap-2">
+                 <Save className="w-5 h-5 text-indigo-600"/> 保存草稿
+               </h3>
+             </div>
+             <div className="p-6 space-y-4">
+               <div>
+                 <label className="block text-sm font-medium text-slate-700 mb-2">给这个版本起个名字</label>
+                 <input 
+                    autoFocus
+                    type="text" 
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    placeholder="例如：双11活动第一版"
+                    className="w-full px-3 py-2 bg-slate-100 border-transparent rounded-lg text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                    onKeyDown={(e) => e.key === 'Enter' && executeSave()}
+                 />
+               </div>
+               <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded border border-slate-100 flex gap-2">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5 text-slate-400" />
+                  <p>草稿包含当前的所有文字和图片。如果图片较大，可能会占用较多浏览器存储空间。</p>
+               </div>
+             </div>
+             <div className="p-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-100">
+                <button 
+                  onClick={() => setIsSaveModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={executeSave}
+                  className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors"
+                >
+                  确认保存
+                </button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {/* LEFT SIDEBAR: Controls - Fixed Desktop Layout */}
       <div className="w-1/2 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0 z-10">
         
         {/* Header */}
-        <div className="px-[55px] pt-[55px] pb-6 border-b border-slate-100 shrink-0">
+        <div className="px-[55px] pt-[55px] pb-6 border-b border-slate-100 shrink-0 flex items-center justify-between">
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-700">
             <LayoutTemplate className="w-6 h-6" />
             这相有礼商品详情页生成器
           </h1>
-          {/* Subtitle removed as requested */}
+          
+          {/* History Controls */}
+          <div className="flex items-center gap-2">
+            {/* Save Button Removed from Header */}
+            <button 
+              onClick={() => setShowHistory(!showHistory)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${
+                showHistory ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="查看历史记录"
+            >
+              <History size={14} /> 记录
+            </button>
+          </div>
         </div>
+
+        {/* History Panel Overlay */}
+        {showHistory && (
+          <div className="absolute top-[100px] right-0 left-0 bottom-0 bg-white/95 backdrop-blur-sm z-50 px-[55px] py-8 border-b border-slate-200 flex flex-col shadow-xl animate-in slide-in-from-top-4 duration-200">
+             <div className="flex items-center justify-between mb-4">
+               <h3 className="text-lg font-bold flex items-center gap-2">
+                 <Clock className="w-5 h-5 text-indigo-500"/> 历史存档 (本地)
+               </h3>
+               <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-slate-100 rounded-full">
+                 <X size={20} className="text-slate-500" />
+               </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+               {savedRecords.length === 0 ? (
+                 <div className="text-center py-12 text-slate-400 border border-dashed border-slate-200 rounded-lg">暂无保存记录</div>
+               ) : (
+                 savedRecords.map(record => (
+                   <div key={record.id} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-lg hover:border-indigo-300 transition-colors group">
+                      <div className="flex flex-col cursor-pointer flex-1" onClick={() => handleLoadRecord(record)}>
+                        <span className="font-medium text-slate-800 group-hover:text-indigo-700">{record.name}</span>
+                        <span className="text-xs text-slate-400">{new Date(record.timestamp).toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => handleLoadRecord(record)}
+                          className="px-3 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+                        >
+                          重新编辑
+                        </button>
+                        <button 
+                          onClick={(e) => handleDeleteRecord(record.id, e)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                          title="删除记录"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                   </div>
+                 ))
+               )}
+             </div>
+             <div className="mt-4 pt-4 border-t border-slate-100 text-[10px] text-slate-400 text-center">
+               * 记录保存在您的浏览器缓存中，清除缓存会导致记录丢失。请勿过度依赖长期存储。
+             </div>
+          </div>
+        )}
 
         {/* Content Section - Scrollable */}
         <div className="px-[55px] py-8 space-y-8 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
           
-          {/* STEP 1: Image */}
+          {/* NEW SECTION 0: Functional Images (Multi-image, 1:1, Drag-sort, Delete) */}
+          <section className="space-y-4">
+             <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-600"/>
+                0. 商品主图
+              </h2>
+              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{functionalImages.length} 张</span>
+            </div>
+            
+            <div className="grid grid-cols-3 gap-3">
+              {functionalImages.map((img, index) => (
+                <div 
+                  key={img.id}
+                  className={`relative aspect-square rounded-lg overflow-hidden border border-slate-200 group cursor-move ${draggedFuncImgIndex === index ? 'opacity-50 ring-2 ring-indigo-500' : ''} bg-slate-50`}
+                  draggable
+                  onDragStart={() => handleFuncImgDragStart(index)}
+                  onDragEnter={() => handleFuncImgDragEnter(index)}
+                  onDragEnd={handleFuncImgDragEnd}
+                  onDragOver={(e) => e.preventDefault()}
+                >
+                  <img src={img.url} className="w-full h-full object-cover" alt={`Func ${index}`} />
+                  
+                  {/* Edit Crop Button */}
+                  <button 
+                    onClick={() => setEditingFuncImageId(img.id)}
+                    className="absolute bottom-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-indigo-600 z-10"
+                    title="裁剪图片"
+                  >
+                    <Pencil size={12} />
+                  </button>
+
+                  {/* Delete Button */}
+                  <button 
+                    onClick={() => handleRemoveFuncImg(img.id)}
+                    className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 z-10"
+                    title="删除"
+                  >
+                    <X size={12} />
+                  </button>
+
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none flex items-end justify-center pb-2">
+                    <span className="text-[10px] text-white bg-black/40 px-1.5 rounded opacity-0 group-hover:opacity-100 pointer-events-none">拖拽排序</span>
+                  </div>
+                </div>
+              ))}
+              
+              <div 
+                onClick={() => funcImgInputRef.current?.click()}
+                className="group aspect-square border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors flex flex-col items-center justify-center text-center bg-white"
+              >
+                <Plus className="w-6 h-6 text-slate-400 group-hover:text-indigo-500 mb-1" />
+                <span className="text-[10px] text-slate-500 group-hover:text-indigo-600">添加图片</span>
+                <input 
+                  type="file" 
+                  ref={funcImgInputRef} 
+                  className="hidden" 
+                  accept="image/*"
+                  multiple
+                  onChange={handleFuncImgUpload}
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400">
+               * 注意：此区域图片将仅在<b>导出</b>时下载（Zip包），不会出现在右侧长图预览中。
+            </p>
+          </section>
+
+          <hr className="border-slate-100" />
+
+          {/* STEP 1: Existing Header Image */}
           <section className="space-y-4">
              <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">1. 头图设置</h2>
@@ -531,23 +1049,42 @@ function App() {
         </div>
 
         {/* Footer Actions */}
-        <div className="px-[55px] pb-[21px] pt-6 bg-white border-t border-slate-200 shrink-0">
+        <div className="px-[55px] pb-[21px] pt-6 bg-white border-t border-slate-200 shrink-0 flex gap-3">
           <button 
-            onClick={handleDownload}
-            disabled={isDownloading}
-            className={`w-full py-3 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 shadow-lg ${
-              isDownloading ? 'bg-slate-400 cursor-wait' : 'bg-[rgb(29,29,31)] hover:bg-black'
+            onClick={handleOpenSaveModal}
+            disabled={isSaving || isDownloading || isZipping}
+            className="flex-1 py-3 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-300 shadow-sm"
+          >
+            {isSaving ? (
+              <>
+               <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
+               保存中...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                保存草稿
+              </>
+            )}
+          </button>
+
+          {/* Combined Export Button */}
+          <button 
+            onClick={handleExportAll}
+            disabled={isDownloading || isZipping || isSaving}
+            className={`flex-[2] py-3 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 shadow-lg ${
+              (isDownloading || isZipping) ? 'bg-slate-400 cursor-wait' : 'bg-[rgb(29,29,31)] hover:bg-black'
             }`}
           >
-            {isDownloading ? (
+            {(isDownloading || isZipping) ? (
                <>
                  <RefreshCw className="w-4 h-4 animate-spin" />
-                 生成中...
+                 {isZipping ? '打包中...' : '生成中...'}
                </>
             ) : (
                <>
                  <Download className="w-4 h-4" />
-                 导出
+                 导出商品主图和详情图
                </>
             )}
           </button>
