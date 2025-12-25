@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold, Save, History, Clock, AlertCircle, Layers, FolderDown, Pencil } from 'lucide-react';
+import { Upload, Sparkles, Download, RefreshCw, LayoutTemplate, Image as ImageIcon, Plus, Trash2, Type as TypeIcon, GripVertical, Settings2, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Bold, Save, History, Clock, AlertCircle, Layers, FolderDown, Pencil, FileJson, FolderOpen, HardDriveDownload, Loader2 } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
 import JSZip from 'jszip';
 import PosterPreview from './components/PosterPreview';
@@ -34,6 +34,65 @@ interface SavedRecord {
   functionalImages?: HeaderImage[];
 }
 
+// --- IndexedDB Utilities (Replaces localStorage) ---
+const DB_NAME = 'PosterGeneratorDB';
+const STORE_NAME = 'drafts';
+const DB_VERSION = 1;
+
+const dbAPI = {
+  open: (): Promise<IDBDatabase> => {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = (e) => {
+        const db = (e.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
+      };
+    });
+  },
+  
+  add: async (record: SavedRecord): Promise<void> => {
+    const db = await dbAPI.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put(record); // put allows updating if id exists
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  getAll: async (): Promise<SavedRecord[]> => {
+    const db = await dbAPI.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        // Sort by timestamp descending (newest first)
+        const records = request.result as SavedRecord[];
+        records.sort((a, b) => b.timestamp - a.timestamp);
+        resolve(records);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  delete: async (id: string): Promise<void> => {
+    const db = await dbAPI.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.delete(id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+};
+
 // Helper: Convert Blob URL to Base64 for storage
 const blobUrlToBase64 = async (url: string): Promise<string> => {
   if (!url || url.startsWith('data:')) return url; // Already base64 or empty
@@ -52,11 +111,24 @@ const blobUrlToBase64 = async (url: string): Promise<string> => {
   }
 };
 
+// Helper to generate formatted timestamp string (YYYYMMDD-HHMMSS)
+const getFormattedTimeStr = () => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+};
+
 function App() {
   const [posterData, setPosterData] = useState<PosterData>(INITIAL_DATA);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   
   // Drag and Drop State for Sidebar
   const [draggedBlockIndex, setDraggedBlockIndex] = useState<number | null>(null);
@@ -87,32 +159,21 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const funcImgInputRef = useRef<HTMLInputElement>(null);
+  // Ref for Project File Import
+  const projectFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load history from localStorage on mount
+  // Load history from IndexedDB on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('poster_history');
-      if (stored) {
-        setSavedRecords(JSON.parse(stored));
+    const loadData = async () => {
+      try {
+        const records = await dbAPI.getAll();
+        setSavedRecords(records);
+      } catch (e) {
+        console.error("Failed to load history from IndexedDB", e);
       }
-    } catch (e) {
-      console.error("Failed to load history", e);
-    }
+    };
+    loadData();
   }, []);
-
-  // Save history to localStorage whenever it changes
-  useEffect(() => {
-    try {
-      localStorage.setItem('poster_history', JSON.stringify(savedRecords));
-    } catch (e) {
-      // Check for QuotaExceededError
-      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
-         console.warn("LocalStorage quota exceeded. Data saved in memory only.");
-      } else {
-        console.error("Storage failed", e);
-      }
-    }
-  }, [savedRecords]);
 
   // Open Save Modal
   const handleOpenSaveModal = () => {
@@ -120,7 +181,118 @@ function App() {
     setIsSaveModalOpen(true);
   };
 
-  // Actual Save Logic
+  // --- SAVE TO LOCAL FILE (EXPORT JSON) ---
+  const handleSaveToLocalFile = async () => {
+    setIsSaving(true);
+    try {
+      // 1. Prepare Data (Convert all images to Base64)
+      const headerBase64 = await blobUrlToBase64(imageConfig.url || "");
+      const savedFunctionalImages = await Promise.all(functionalImages.map(async (img) => {
+         const base64 = await blobUrlToBase64(img.url);
+         return { ...img, url: base64 };
+      }));
+      const newContent = await Promise.all(posterData.content.map(async (block) => {
+        if (block.type === 'image' && block.value) {
+          const base64 = await blobUrlToBase64(block.value);
+          return { ...block, value: base64 };
+        }
+        return block;
+      }));
+
+      const exportData: SavedRecord = {
+        id: Date.now().toString(),
+        name: "Local Export",
+        timestamp: Date.now(),
+        data: { ...posterData, content: newContent },
+        imageConfig: { ...imageConfig, url: headerBase64 },
+        functionalImages: savedFunctionalImages
+      };
+
+      // 2. Create Blob and Download
+      const jsonString = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `详情页工程-${getFormattedTimeStr()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+    } catch (e) {
+      console.error("Export failed", e);
+      alert("导出工程文件失败，请重试。");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // --- LOAD FROM LOCAL FILE (IMPORT JSON) ---
+  const handleImportClick = () => {
+    if (isImporting) return;
+    projectFileInputRef.current?.click();
+  };
+
+  const handleFileImportChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm("确定要导入该工程文件吗？当前未保存的修改将被覆盖。")) {
+       // Reset input so user can select same file again if they cancelled
+       e.target.value = '';
+       return;
+    }
+
+    setIsImporting(true);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const record = JSON.parse(json) as SavedRecord;
+        
+        // Basic validation
+        if (!record.data || !record.imageConfig) {
+          throw new Error("文件格式不正确：缺少必要的工程数据");
+        }
+
+        // Apply Data
+        setPosterData(record.data);
+        setImageConfig(record.imageConfig);
+        setFunctionalImages(record.functionalImages || []);
+        
+        // Small delay to ensure UI updates before alert
+        setTimeout(() => {
+          alert(`✅ 导入成功！\n\n已加载工程，包含 ${record.functionalImages?.length || 0} 张商品主图。`);
+        }, 100);
+
+      } catch (err) {
+        console.error(err);
+        const msg = err instanceof Error ? err.message : "未知错误";
+        alert(`❌ 导入失败：${msg}\n\n请确认您选择的是正确的 .json 工程文件。`);
+      } finally {
+        setIsImporting(false);
+        // Reset input to allow selecting the same file again
+        if (projectFileInputRef.current) projectFileInputRef.current.value = '';
+      }
+    };
+
+    reader.onerror = () => {
+      alert("❌ 读取文件出错，请重试。");
+      setIsImporting(false);
+      if (projectFileInputRef.current) projectFileInputRef.current.value = '';
+    };
+
+    // Use a small timeout to allow the "Loading" UI to render before blocking the thread with large file reading
+    setTimeout(() => {
+        reader.readAsText(file);
+    }, 50);
+  };
+
+
+  // Actual Save Logic (Updated to use IndexedDB)
   const executeSave = async () => {
     if (!saveName.trim()) return;
 
@@ -158,24 +330,14 @@ function App() {
         functionalImages: savedFunctionalImages
       };
 
-      // Try to save to state (Memory)
-      setSavedRecords(prev => {
-        const newRecords = [record, ...prev];
-        
-        // Try to save to LocalStorage (Disk) immediately to catch errors
-        try {
-          localStorage.setItem('poster_history', JSON.stringify(newRecords));
-          // If successful, we are good.
-        } catch (e) {
-          if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
-            alert("⚠️ 警告：本地存储空间已满！\n\n该草稿已保存，但仅在当前浏览器窗口未关闭前有效。\n刷新页面后将丢失。\n\n建议：删除旧的历史记录以释放空间。");
-          }
-        }
-        return newRecords;
-      });
+      // Save to IndexedDB (Disk)
+      await dbAPI.add(record);
+      
+      // Update State (Memory)
+      setSavedRecords(prev => [record, ...prev]);
 
     } catch (error) {
-      alert("保存过程中发生错误，请重试。");
+      alert("保存失败：数据库写入错误。可能是存储空间不足或权限受限。");
       console.error(error);
     } finally {
       setIsSaving(false);
@@ -191,10 +353,16 @@ function App() {
     }
   };
 
-  const handleDeleteRecord = (id: string, e: React.MouseEvent) => {
+  const handleDeleteRecord = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm("确定要删除这条记录吗？")) {
-      setSavedRecords(prev => prev.filter(r => r.id !== id));
+      try {
+        await dbAPI.delete(id);
+        setSavedRecords(prev => prev.filter(r => r.id !== id));
+      } catch (error) {
+        console.error("Delete failed", error);
+        alert("删除失败");
+      }
     }
   };
   
@@ -394,7 +562,8 @@ function App() {
         });
         
         const link = document.createElement('a');
-        link.download = `poster-${Date.now()}.png`;
+        // Updated filename format: 商品长图-YYYYMMDD-HHMMSS.png
+        link.download = `商品长图-${getFormattedTimeStr()}.png`;
         link.href = dataUrl;
         link.click();
       } catch (error) {
@@ -506,7 +675,8 @@ function App() {
       const url = URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `product-images-${Date.now()}.zip`;
+      // Updated filename format: 商品主图-YYYYMMDD-HHMMSS.zip
+      link.download = `商品主图-${getFormattedTimeStr()}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -540,7 +710,15 @@ function App() {
 
   return (
     <div className="min-h-screen bg-white text-[rgb(29,29,31)] font-sans flex flex-row relative">
-      
+      {/* Hidden Input for Project Import */}
+      <input 
+        type="file" 
+        ref={projectFileInputRef}
+        onChange={handleFileImportChange}
+        className="hidden" 
+        accept=".json"
+      />
+
       {/* Crop Modal */}
       {editingFuncImage && (
         <CropModal 
@@ -550,13 +728,13 @@ function App() {
         />
       )}
 
-      {/* Custom Save Modal */}
+      {/* Custom Save Modal - Text Updated */}
       {isSaveModalOpen && (
         <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
              <div className="p-5 border-b border-slate-100">
                <h3 className="font-bold text-lg flex items-center gap-2">
-                 <Save className="w-5 h-5 text-indigo-600"/> 保存草稿
+                 <Save className="w-5 h-5 text-indigo-600"/> 保存草稿 (历史记录)
                </h3>
              </div>
              <div className="p-6 space-y-4">
@@ -573,8 +751,12 @@ function App() {
                  />
                </div>
                <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded border border-slate-100 flex gap-2">
-                  <AlertCircle size={14} className="shrink-0 mt-0.5 text-slate-400" />
-                  <p>草稿包含当前的所有文字和图片。如果图片较大，可能会占用较多浏览器存储空间。</p>
+                  <AlertCircle size={14} className="shrink-0 mt-0.5 text-indigo-500" />
+                  <p>草稿将保存到浏览器的数据库中 (IndexedDB)，方便快速切换。</p>
+               </div>
+               <div className="text-xs text-slate-500 bg-indigo-50 p-3 rounded border border-indigo-100 flex gap-2">
+                  <HardDriveDownload size={14} className="shrink-0 mt-0.5 text-indigo-600" />
+                  <p>如果您希望保存文件到电脑以便传输，请使用右上角的“导出工程”。</p>
                </div>
              </div>
              <div className="p-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-100">
@@ -598,34 +780,54 @@ function App() {
       {/* LEFT SIDEBAR: Controls - Fixed Desktop Layout */}
       <div className="w-1/2 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0 z-10">
         
-        {/* Header */}
+        {/* Header - Added Project Buttons */}
         <div className="px-[55px] pt-[55px] pb-6 border-b border-slate-100 shrink-0 flex items-center justify-between">
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-700">
             <LayoutTemplate className="w-6 h-6" />
             这相有礼商品详情页生成器
           </h1>
           
-          {/* History Controls */}
+          {/* History & Project Controls */}
           <div className="flex items-center gap-2">
-            {/* Save Button Removed from Header */}
+            <button 
+              onClick={handleImportClick}
+              disabled={isImporting}
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-md transition-colors ${
+                isImporting ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-50 hover:text-indigo-600'
+              }`}
+              title="导入本地 .json 工程文件"
+            >
+              {isImporting ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />} 
+              {isImporting ? '读取中...' : '导入工程'}
+            </button>
+            <button 
+              onClick={handleSaveToLocalFile}
+              disabled={isSaving}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+              title="将当前工程保存为 .json 文件到电脑"
+            >
+              {isSaving ? <Loader2 size={14} className="animate-spin" /> : <HardDriveDownload size={14} />}
+              导出工程
+            </button>
+            <div className="w-px h-4 bg-slate-200 mx-1"></div>
             <button 
               onClick={() => setShowHistory(!showHistory)}
               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${
                 showHistory ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
               }`}
-              title="查看历史记录"
+              title="查看浏览器缓存的历史记录"
             >
               <History size={14} /> 记录
             </button>
           </div>
         </div>
 
-        {/* History Panel Overlay */}
+        {/* History Panel Overlay - Text Updated */}
         {showHistory && (
           <div className="absolute top-[100px] right-0 left-0 bottom-0 bg-white/95 backdrop-blur-sm z-50 px-[55px] py-8 border-b border-slate-200 flex flex-col shadow-xl animate-in slide-in-from-top-4 duration-200">
              <div className="flex items-center justify-between mb-4">
                <h3 className="text-lg font-bold flex items-center gap-2">
-                 <Clock className="w-5 h-5 text-indigo-500"/> 历史存档 (本地)
+                 <Clock className="w-5 h-5 text-indigo-500"/> 历史存档 (IndexedDB)
                </h3>
                <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-slate-100 rounded-full">
                  <X size={20} className="text-slate-500" />
@@ -662,7 +864,7 @@ function App() {
                )}
              </div>
              <div className="mt-4 pt-4 border-t border-slate-100 text-[10px] text-slate-400 text-center">
-               * 记录保存在您的浏览器缓存中，清除缓存会导致记录丢失。请勿过度依赖长期存储。
+               * 记录保存在您浏览器的 IndexedDB 数据库中，容量通常可达 GB 级别，清除浏览器数据会丢失记录。
              </div>
           </div>
         )}
