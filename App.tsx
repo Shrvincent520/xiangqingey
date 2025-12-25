@@ -214,9 +214,9 @@ function App() {
         <div className="px-[55px] pt-[55px] pb-6 border-b border-slate-100 shrink-0">
           <h1 className="text-xl font-bold flex items-center gap-2 text-indigo-700">
             <LayoutTemplate className="w-6 h-6" />
-            AI 详情页生成器
+            这相有礼商品详情页生成器
           </h1>
-          <p className="text-xs text-slate-500 mt-1">输入一段文字，自动排版成精美海报</p>
+          {/* Subtitle removed as requested */}
         </div>
 
         {/* Content Section - Scrollable */}
@@ -225,7 +225,7 @@ function App() {
           {/* STEP 1: Image */}
           <section className="space-y-4">
              <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">1. 配图设置</h2>
+              <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">1. 头图设置</h2>
             </div>
             
             <div 
@@ -252,12 +252,12 @@ function App() {
           {/* STEP 2: Manual Edits */}
           <section className="space-y-4">
              <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">2. 细节微调</h2>
+              <h2 className="text-sm font-bold text-[rgb(29,29,31)] uppercase tracking-wider">2. 商品详情</h2>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-8">
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">主标题 / Slogan</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">描述文字</label>
                 <textarea 
                   rows={2}
                   value={posterData.subTitle}
@@ -270,7 +270,7 @@ function App() {
               {/* Dynamic Details List */}
               <div className="space-y-2">
                  <div className="flex items-center justify-between">
-                   <label className="block text-xs font-medium text-slate-500">关键信息</label>
+                   <label className="block text-xs font-medium text-slate-500">商品类别</label>
                  </div>
                  
                  <div className="space-y-2">
@@ -346,7 +346,7 @@ function App() {
               
               {/* Marketing Copy / Rich Content Editor */}
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-2 mt-4">营销文案 / 详情内容</label>
+                <label className="block text-xs font-medium text-slate-500 mb-2">详情内容</label>
                 
                 <div className="space-y-3">
                   {posterData.content.map((block, index) => (
@@ -382,6 +382,7 @@ function App() {
                                 value={block.value}
                                 onChange={(val) => handleBlockChange(block.id, val)}
                                 className="w-full"
+                                minHeight="100px"
                               />
                             </div>
                             
@@ -546,7 +547,7 @@ function App() {
             ) : (
                <>
                  <Download className="w-4 h-4" />
-                 导出高清海报
+                 导出
                </>
             )}
           </button>
