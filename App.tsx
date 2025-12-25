@@ -424,7 +424,7 @@ function App() {
   };
 
   const handleLoadRecord = (record: SavedRecord) => {
-    if (window.confirm(`确定要加载存档“${record.name}”吗？当前未保存的修改将丢失。`)) {
+    if (window.confirm(`确定要重新编辑存档“${record.name}”吗？当前未保存的修改将丢失。`)) {
       setPosterData(record.data);
       setImageConfig(record.imageConfig);
       setFunctionalImages(record.functionalImages || []);
@@ -868,7 +868,7 @@ function App() {
                </div>
 
                {/* Overwrite or Copy Option */}
-               <div className="flex items-center gap-2 p-3 bg-slate-50 rounded border border-slate-200">
+               <div className="flex items-center gap-2 p-3 bg-white rounded border border-slate-300">
                   <input 
                     type="checkbox" 
                     id="saveAsCopy"
@@ -884,7 +884,7 @@ function App() {
                          setSaveName(saveName.slice(0, -3));
                       }
                     }}
-                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300"
+                    className="w-4 h-4 text-indigo-600 bg-white rounded focus:ring-indigo-500 border-gray-300"
                   />
                   <label htmlFor="saveAsCopy" className="text-sm text-slate-600 cursor-pointer flex items-center gap-1 select-none">
                     <Copy size={14} /> 另存为新副本 (不覆盖)
