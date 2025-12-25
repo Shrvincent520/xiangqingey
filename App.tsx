@@ -111,6 +111,64 @@ const blobUrlToBase64 = async (url: string): Promise<string> => {
   }
 };
 
+// Helper: Resize and Compress Image on Upload
+const processImageFile = (file: File, maxWidth: number = 960): Promise<string> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (readerEvent) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        // Resize logic: Only downscale if larger than maxWidth
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          // Fallback to original if canvas fails
+          resolve(URL.createObjectURL(file));
+          return;
+        }
+
+        // Fill white background for JPEGs (handles transparent PNGs converting to JPEG black background issue)
+        // Note: If preserving PNG transparency is critical, we might need logic here, 
+        // but for product details, white bg is usually safer for JPEGs.
+        if (file.type !== 'image/png') {
+           ctx.fillStyle = '#FFFFFF';
+           ctx.fillRect(0, 0, width, height);
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Compress
+        const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const quality = 0.7; // Reduced quality for better performance
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(URL.createObjectURL(blob));
+          } else {
+            resolve(URL.createObjectURL(file));
+          }
+        }, mimeType, quality);
+      };
+      img.onerror = () => resolve(URL.createObjectURL(file)); // Fallback
+      img.src = readerEvent.target?.result as string;
+    };
+    reader.onerror = () => resolve(URL.createObjectURL(file)); // Fallback
+    reader.readAsDataURL(file);
+  });
+};
+
+
 // Helper to generate formatted timestamp string (YYYYMMDD-HHMMSS)
 const getFormattedTimeStr = () => {
   const now = new Date();
@@ -129,6 +187,7 @@ function App() {
   const [isZipping, setIsZipping] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isProcessingImg, setIsProcessingImg] = useState(false); // New state for image processing
   
   // Drag and Drop State for Sidebar
   const [draggedBlockIndex, setDraggedBlockIndex] = useState<number | null>(null);
@@ -367,32 +426,50 @@ function App() {
   };
   
   // Handler for Existing Header Image
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      setImageConfig({
-        url,
-        x: 0,
-        y: 0,
-        scale: 1
-      });
+      setIsProcessingImg(true);
+      try {
+        const url = await processImageFile(file);
+        setImageConfig({
+          url,
+          x: 0,
+          y: 0,
+          scale: 1
+        });
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsProcessingImg(false);
+      }
     }
   };
 
-  // Handlers for New Functional Images
-  const handleFuncImgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handlers for New Functional Images (Batch Processing)
+  const handleFuncImgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
 
-    const newImages: HeaderImage[] = files.map(file => ({
-      id: Date.now().toString() + Math.random().toString().slice(2, 6),
-      url: URL.createObjectURL(file),
-      // Default crop is centered (undefined means center in logic)
-    }));
+    setIsProcessingImg(true);
+    
+    try {
+      // Process images concurrently
+      const processedImages = await Promise.all(files.map(async (file) => {
+         const url = await processImageFile(file);
+         return {
+           id: Date.now().toString() + Math.random().toString().slice(2, 6),
+           url: url,
+         };
+      }));
 
-    setFunctionalImages(prev => [...prev, ...newImages]);
-    if (funcImgInputRef.current) funcImgInputRef.current.value = '';
+      setFunctionalImages(prev => [...prev, ...processedImages]);
+    } catch (e) {
+      console.error("Image processing failed", e);
+    } finally {
+      setIsProcessingImg(false);
+      if (funcImgInputRef.current) funcImgInputRef.current.value = '';
+    }
   };
 
   const handleRemoveFuncImg = (id: string) => {
@@ -499,11 +576,15 @@ function App() {
     }));
   };
 
-  const handleBlockImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBlockImageUpload = async (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      handleBlockChange(id, url);
+      try {
+        const url = await processImageFile(file);
+        handleBlockChange(id, url);
+      } catch (err) {
+        console.error(err);
+      }
     }
   };
 
@@ -592,7 +673,7 @@ function App() {
     try {
       const zip = new JSZip();
       const folder = zip.folder("product-images");
-      const OUTPUT_SIZE = 1200; // High resolution output square
+      const OUTPUT_SIZE = 1000; // High resolution output square
       
       // Helper to process and crop image
       const processImage = (imgData: HeaderImage): Promise<Blob> => {
@@ -651,7 +732,7 @@ function App() {
                canvas.toBlob((blob) => {
                  if (blob) resolve(blob);
                  else reject(new Error('Canvas blob failed'));
-               }, 'image/jpeg', 0.95);
+               }, 'image/jpeg', 0.6);
             } else {
               reject(new Error('Canvas context failed'));
             }
@@ -921,10 +1002,19 @@ function App() {
               
               <div 
                 onClick={() => funcImgInputRef.current?.click()}
-                className="group aspect-square border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors flex flex-col items-center justify-center text-center bg-white"
+                className={`group aspect-square border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors flex flex-col items-center justify-center text-center bg-white ${isProcessingImg ? 'opacity-50 pointer-events-none' : ''}`}
               >
-                <Plus className="w-6 h-6 text-slate-400 group-hover:text-indigo-500 mb-1" />
-                <span className="text-[10px] text-slate-500 group-hover:text-indigo-600">添加图片</span>
+                {isProcessingImg ? (
+                  <>
+                    <Loader2 className="w-6 h-6 text-indigo-500 animate-spin mb-1" />
+                    <span className="text-[10px] text-indigo-500">处理中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-6 h-6 text-slate-400 group-hover:text-indigo-500 mb-1" />
+                    <span className="text-[10px] text-slate-500 group-hover:text-indigo-600">添加图片</span>
+                  </>
+                )}
                 <input 
                   type="file" 
                   ref={funcImgInputRef} 
@@ -936,7 +1026,7 @@ function App() {
               </div>
             </div>
             <p className="text-[10px] text-slate-400">
-               * 注意：此区域图片将仅在<b>导出</b>时下载（Zip包），不会出现在右侧长图预览中。
+               * 图片将自动压缩并调整为 960px 宽。此区域图片仅在<b>导出</b>时下载（Zip包）。
             </p>
           </section>
 
@@ -952,8 +1042,17 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               className="group border-2 border-dashed border-slate-300 rounded-lg p-4 cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors flex flex-col items-center justify-center text-center h-24"
             >
-              <Upload className="w-6 h-6 text-slate-400 group-hover:text-indigo-500 mb-2" />
-              <span className="text-xs text-slate-500 group-hover:text-indigo-600">点击上传图片</span>
+              {isProcessingImg ? (
+                <>
+                   <Loader2 className="w-6 h-6 text-indigo-500 animate-spin mb-2" />
+                   <span className="text-xs text-indigo-500">图片处理中...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-6 h-6 text-slate-400 group-hover:text-indigo-500 mb-2" />
+                  <span className="text-xs text-slate-500 group-hover:text-indigo-600">点击上传图片</span>
+                </>
+              )}
               <input 
                 type="file" 
                 ref={fileInputRef} 
